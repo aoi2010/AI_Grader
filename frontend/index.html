@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Grader - Indian Board Exam System</title>
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- MathJax for LaTeX rendering -->
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    
+    <!-- Marked.js for Markdown rendering -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    
+    <script>
+        window.MathJax = {
+            tex: {
+                inlineMath: [['$', '$'], ['\\(', '\\)']],
+                displayMath: [['$$', '$$'], ['\\[', '\\]']]
+            },
+            svg: {
+                fontCache: 'global'
+            }
+        };
+    </script>
+</head>
+<body>
+    <!-- Setup Screen -->
+    <div id="setup-screen" class="screen active">
+        <div class="container">
+            <div class="header">
+                <h1>🎓 AI Grader</h1>
+                <p>Indian Board Exam System - CBSE / ICSE / WBBSE</p>
+            </div>
+            
+            <div class="setup-form">
+                <h2>Create Your Exam</h2>
+                
+                <div class="form-group">
+                    <label for="userName">Your Name *</label>
+                    <input type="text" id="userName" required placeholder="Enter your full name">
+                </div>
+                
+                <div class="form-group">
+                    <label for="userEmail">Email *</label>
+                    <input type="email" id="userEmail" required placeholder="your.email@example.com">
+                </div>
+                
+                <div class="form-group">
+                    <label for="board">Board *</label>
+                    <select id="board" required>
+                        <option value="">Select Board</option>
+                        <option value="CBSE">CBSE</option>
+                        <option value="ICSE">ICSE</option>
+                        <option value="WBBSE">WBBSE</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="classNum">Class *</label>
+                    <select id="classNum" required>
+                        <option value="">Select Class</option>
+                        <option value="6">Class 6</option>
+                        <option value="7">Class 7</option>
+                        <option value="8">Class 8</option>
+                        <option value="9">Class 9</option>
+                        <option value="10">Class 10</option>
+                        <option value="11">Class 11</option>
+                        <option value="12">Class 12</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="subject">Subject *</label>
+                    <input type="text" id="subject" required placeholder="e.g., Mathematics, Physics, Chemistry">
+                </div>
+                
+                <div class="form-group">
+                    <label for="chapterFocus">Chapter Focus (Optional)</label>
+                    <textarea id="chapterFocus" rows="3" placeholder="Specify chapters or topics to focus on (optional)"></textarea>
+                </div>
+                
+                <div class="form-group">
+                    <label for="customDuration">Custom Duration (Optional)</label>
+                    <input type="number" id="customDuration" min="1" placeholder="Leave empty for default duration">
+                    <small style="color: #64748b; display: block; margin-top: 4px;">Note: You can only set a duration lower than the default exam duration</small>
+                </div>
+                
+                <button id="createExamBtn" class="btn btn-primary">Generate Exam Paper</button>
+                <div id="setupStatus" class="status-message"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Exam Instructions Screen -->
+    <div id="instructions-screen" class="screen">
+        <div class="container">
+            <div class="header">
+                <h1>Exam Instructions</h1>
+            </div>
+            
+            <div class="exam-info" id="examInfo"></div>
+            
+            <div class="instructions-box">
+                <h3>Important Instructions:</h3>
+                <ul>
+                    <li>You can navigate to <strong>any question</strong> at any time</li>
+                    <li>Answer questions in any order you prefer</li>
+                    <li>You can type your answer or upload a PDF</li>
+                    <li>For mathematical expressions, use LaTeX notation (e.g., $\\frac{x}{y}$, $x^2$)</li>
+                    <li>A live preview will show your formatted answer</li>
+                    <li>Timer will start when you begin the exam</li>
+                    <li>Your progress is saved automatically</li>
+                    <li>Once submitted, you cannot edit answers</li>
+                </ul>
+            </div>
+            
+            <button id="startExamBtn" class="btn btn-primary">Start Exam</button>
+        </div>
+    </div>
+    
+    <!-- Exam Screen -->
+    <div id="exam-screen" class="screen">
+        <div class="exam-header">
+            <div class="exam-metadata">
+                <span id="examTitle"></span>
+                <span id="questionProgress"></span>
+            </div>
+            <div id="timer" class="timer">00:00:00</div>
+        </div>
+        
+        <div class="exam-container">
+            <!-- Question Display -->
+            <div class="question-section">
+                <div class="question-header">
+                    <span class="section-label" id="sectionLabel"></span>
+                    <span class="marks-label" id="marksLabel"></span>
+                </div>
+                
+                <div class="question-content" id="questionContent"></div>
+                
+                <!-- MCQ Options (if applicable) -->
+                <div id="mcqOptions" class="mcq-options" style="display: none;"></div>
+                
+                <!-- Internal Choice (if applicable) -->
+                <div id="internalChoice" class="internal-choice" style="display: none;"></div>
+            </div>
+            
+            <!-- Answer Section -->
+            <div class="answer-section">
+                <h3>Your Answer</h3>
+                
+                <!-- Typed Answer -->
+                <div class="answer-input-group">
+                    <label>Type your answer (supports LaTeX):</label>
+                    <textarea id="answerInput" rows="8" placeholder="Type your answer here. Use $ for inline math and $$ for display math.&#10;Example: The solution is $x = \\frac{-b \\pm \\sqrt{b^2-4ac}}{2a}$"></textarea>
+                    
+                    <div class="latex-help">
+                        <strong>LaTeX Quick Reference:</strong>
+                        <code>$\frac{a}{b}$</code> → fraction,
+                        <code>$x^2$</code> → superscript,
+                        <code>$x_1$</code> → subscript,
+                        <code>$\sqrt{x}$</code> → square root,
+                        <code>$\int$</code> → integral
+                    </div>
+                </div>
+                
+                <!-- Live Preview -->
+                <div class="preview-section">
+                    <h4>Live Preview:</h4>
+                    <div id="answerPreview" class="answer-preview"></div>
+                </div>
+                
+                <!-- PDF Upload -->
+                <div class="pdf-upload-section">
+                    <label>Or upload PDF answer sheet:</label>
+                    <input type="file" id="pdfUpload" accept=".pdf">
+                    <button id="uploadPdfBtn" class="btn btn-secondary">Upload PDF</button>
+                    <div id="uploadedFiles" class="uploaded-files"></div>
+                </div>
+                
+                <!-- Action Buttons -->
+                <div class="action-buttons">
+                    <button id="prevQuestionBtn" class="btn btn-secondary">← Previous Question</button>
+                    <button id="saveAnswerBtn" class="btn btn-primary">Save Answer</button>
+                    <button id="nextQuestionBtn" class="btn btn-success">Next Question →</button>
+                </div>
+                
+                <div class="question-navigator" id="questionNavigator" style="margin-top: 20px;">
+                    <h4>Jump to Question:</h4>
+                    <div id="questionButtons" class="question-grid"></div>
+                </div>
+                
+                <div id="answerStatus" class="status-message"></div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Submission Screen -->
+    <div id="submission-screen" class="screen">
+        <div class="container">
+            <div class="header">
+                <h1>Exam Complete!</h1>
+            </div>
+            
+            <div class="completion-message">
+                <p>You have answered all questions.</p>
+                <p>Would you like to upload any remaining answer sheet PDFs before final submission?</p>
+            </div>
+            
+            <div class="final-upload-section">
+                <h3>Final PDF Upload (Optional)</h3>
+                <div class="form-group">
+                    <label for="finalQuestionNumber">Question Number:</label>
+                    <input type="number" id="finalQuestionNumber" min="1" placeholder="Enter question number">
+                </div>
+                <div class="form-group">
+                    <input type="file" id="finalPdfUpload" accept=".pdf">
+                    <button id="finalUploadBtn" class="btn btn-secondary">Upload</button>
+                </div>
+                <div id="finalUploadStatus" class="status-message"></div>
+            </div>
+            
+            <button id="submitExamBtn" class="btn btn-danger">Submit Exam for Evaluation</button>
+        </div>
+    </div>
+    
+    <!-- Evaluation Screen -->
+    <div id="evaluation-screen" class="screen">
+        <div class="container">
+            <div class="header">
+                <h1>Exam Submitted!</h1>
+            </div>
+            
+            <div class="evaluation-progress">
+                <p>Your exam is being evaluated by AI examiner...</p>
+                <div class="loader"></div>
+            </div>
+            
+            <div id="evaluationResult" style="display: none;">
+                <h2>Exam Summary</h2>
+                <div id="examSummary" class="exam-summary"></div>
+                
+                <h2>Evaluation Report</h2>
+                <div id="evaluationReport" class="evaluation-report"></div>
+                
+                <button id="downloadReportBtn" class="btn btn-primary">Download Full Report</button>
+            </div>
+        </div>
+    </div>
+    
+    <script src="app.js"></script>
+</body>
+</html>
