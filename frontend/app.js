@@ -84,6 +84,8 @@ document.getElementById('createExamBtn').addEventListener('click', async () => {
     const subject = document.getElementById('subject').value.trim();
     const chapterFocus = document.getElementById('chapterFocus').value.trim() || null;
     const customDuration = document.getElementById('customDuration').value.trim();
+    const difficultyLevel = document.getElementById('difficultyLevel').value;
+    const syllabusFile = document.getElementById('syllabusUpload').files[0];
     
     // Validation
     if (!userName || !userEmail || !board || !classNum || !subject) {
@@ -110,12 +112,33 @@ document.getElementById('createExamBtn').addEventListener('click', async () => {
             board,
             class_num: classNum,
             subject,
-            chapter_focus: chapterFocus
+            chapter_focus: chapterFocus,
+            difficulty_level: difficultyLevel
         };
         
         // Add custom duration if specified
         if (customDuration && parseInt(customDuration) > 0) {
             requestBody.custom_duration_minutes = parseInt(customDuration);
+        }
+        
+        // Handle syllabus upload if provided
+        if (syllabusFile) {
+            const formData = new FormData();
+            formData.append('syllabus', syllabusFile);
+            
+            try {
+                showStatus('setupStatus', 'Uploading syllabus...', 'info');
+                const uploadResponse = await fetch(`${API_BASE}/exam/upload-syllabus`, {
+                    method: 'POST',
+                    body: formData
+                });
+                if (uploadResponse.ok) {
+                    const uploadResult = await uploadResponse.json();
+                    requestBody.syllabus_content = uploadResult.syllabus_content;
+                }
+            } catch (uploadError) {
+                console.error('Syllabus upload failed:', uploadError);
+            }
         }
         
         const exam = await apiCall('/exam/create', 'POST', requestBody);
@@ -156,6 +179,9 @@ document.getElementById('startExamBtn').addEventListener('click', async () => {
             exam_id: currentExam.id
         });
         
+        // Reset visited questions for new exam
+        visitedQuestions = new Set();
+        
         // Fetch all questions for navigation
         await loadAllQuestions();
         
@@ -163,6 +189,9 @@ document.getElementById('startExamBtn').addEventListener('click', async () => {
         await loadQuestionByIndex(0);
         showScreen('exam-screen');
         startTimer();
+        
+        // Setup download question paper button (after screen is shown)
+        setupDownloadPaperButton();
         
     } catch (error) {
         alert('Error starting exam: ' + error.message);
@@ -178,6 +207,117 @@ async function loadAllQuestions() {
     } catch (error) {
         console.error('Error loading questions:', error);
     }
+}
+
+// Setup download question paper button
+function setupDownloadPaperButton() {
+    const downloadBtn = document.getElementById('downloadPaperBtn');
+    if (downloadBtn) {
+        downloadBtn.onclick = () => {
+            downloadQuestionPaper();
+        };
+    }
+}
+
+// Function to download question paper (can be called from anywhere)
+function downloadQuestionPaper() {
+    const printWindow = window.open('', '', 'width=900,height=700');
+    const examTitle = `${currentExam.board} - Class ${currentExam.class_num} - ${currentExam.subject}`;
+    
+    let questionsHTML = `<h1 style="text-align: center; border-bottom: 3px solid #2563eb; padding-bottom: 15px;">${examTitle}</h1>`;
+    questionsHTML += `<div style="text-align: center; margin: 20px 0; font-size: 1.1rem;">`;
+    questionsHTML += `<p><strong>Total Marks:</strong> ${currentExam.total_marks} &nbsp;&nbsp;|&nbsp;&nbsp; <strong>Duration:</strong> ${currentExam.duration_minutes} minutes</p>`;
+    questionsHTML += `</div><hr style="border: none; border-top: 2px solid #000; margin: 20px 0;">`;
+    
+    // Add instructions
+    questionsHTML += `<div style="background: #f8fafc; padding: 15px; border-radius: 8px; margin: 20px 0; border: 1px solid #e2e8f0;">`;
+    questionsHTML += `<h3 style="margin-top: 0;">Instructions:</h3>`;
+    questionsHTML += `<ul style="margin: 10px 0;">`;
+    questionsHTML += `<li>Read all questions carefully before answering</li>`;
+    questionsHTML += `<li>Answer questions in the provided answer sheet</li>`;
+    questionsHTML += `<li>For questions with OR, answer only ONE option</li>`;
+    questionsHTML += `<li>All questions are compulsory unless otherwise stated</li>`;
+    questionsHTML += `</ul></div><hr style="margin: 20px 0;">`;
+    
+    allQuestions.forEach((q, idx) => {
+        questionsHTML += `<div class="question" style="margin: 25px 0; padding: 15px; border: 1px solid #e2e8f0; border-radius: 8px; page-break-inside: avoid; background: white;">`;
+        questionsHTML += `<p style="font-weight: bold; color: #2563eb; margin-bottom: 10px;">Q${q.sequence_number}. <span style="color: #64748b; font-size: 0.9em;">(Section ${q.section}) [${q.marks} marks]</span></p>`;
+        
+        // Render question text with Markdown support
+        const questionMarkdown = marked.parse(q.question_text || '');
+        questionsHTML += `<div class="question-text" style="line-height: 1.8; margin-left: 10px;">${questionMarkdown}</div>`;
+        
+        if (q.options && q.options.length > 0) {
+            questionsHTML += '<div style="margin: 15px 0 15px 20px;">';
+            q.options.forEach((opt, i) => {
+                // Render option with Markdown support
+                const optionMarkdown = marked.parse(opt || '');
+                questionsHTML += `<div class="mcq-option" style="border: 1px solid #ccc; padding: 10px; margin: 8px 0; border-radius: 4px; background: #fafafa;">`;
+                questionsHTML += `<strong>${String.fromCharCode(65 + i)})</strong> <span>${optionMarkdown}</span></div>`;
+            });
+            questionsHTML += '</div>';
+        }
+        
+        if (q.has_internal_choice && q.alternative_question_text) {
+            // Render alternative question with Markdown support
+            const altMarkdown = marked.parse(q.alternative_question_text || '');
+            questionsHTML += `<div class="or-question" style="border: 2px dashed #2563eb; padding: 15px; margin: 15px 0; background: #eff6ff; border-radius: 8px;">`;
+            questionsHTML += `<p style="font-weight: bold; color: #2563eb; margin-bottom: 8px;">OR</p>`;
+            questionsHTML += `<div style="line-height: 1.8;">${altMarkdown}</div>`;
+            questionsHTML += `</div>`;
+        }
+        
+        questionsHTML += '</div>';
+        if (idx < allQuestions.length - 1) {
+            questionsHTML += '<hr style="border: none; border-top: 1px solid #ccc; margin: 15px 0;">';
+        }
+    });
+    
+    printWindow.document.write(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>${examTitle} - Question Paper</title>
+            <meta charset="UTF-8">
+            <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+            <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+            <style>
+                body { font-family: 'Segoe UI', Arial, sans-serif; padding: 30px; line-height: 1.6; max-width: 900px; margin: 0 auto; }
+                h1 { color: #2563eb; font-size: 1.8rem; }
+                h3 { color: #1e293b; }
+                .question { page-break-inside: avoid; }
+                .question-text p { margin: 10px 0; }
+                .mcq-option p { display: inline; margin: 0; }
+                .or-question p { margin: 8px 0; }
+                code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-family: 'Courier New', monospace; }
+                pre { background: #f8fafc; padding: 15px; border-radius: 8px; overflow-x: auto; }
+                @media print {
+                    body { padding: 20px; }
+                    .question { page-break-inside: avoid; }
+                    h1 { page-break-after: avoid; }
+                }
+            </style>
+        </head>
+        <body>
+            ${questionsHTML}
+            <script>
+                window.onload = function() {
+                    if (window.MathJax) {
+                        MathJax.typesetPromise().then(() => {
+                            setTimeout(() => { window.print(); }, 500);
+                        }).catch((err) => {
+                            console.error('MathJax error:', err);
+                            setTimeout(() => { window.print(); }, 1500);
+                        });
+                    } else {
+                        setTimeout(() => { window.print(); }, 1500);
+                    }
+                };
+            </script>
+        </body>
+        </html>
+    `);
+    printWindow.document.close();
 }
 
 // Build question navigator grid
@@ -200,11 +340,17 @@ function buildQuestionNavigator() {
 async function loadQuestionByIndex(index) {
     if (index < 0 || index >= allQuestions.length) return;
     
-    currentExam.current_question_index = index;
-    await loadCurrentQuestion();
+    // Mark current question as visited
+    visitedQuestions.add(index);
     
-    // Update navigator buttons
-    updateNavigatorButtons();
+    // Update the index BEFORE loading
+    currentExam.current_question_index = index;
+    
+    // Clear previous answer display first
+    clearAnswer();
+    
+    // Load the question
+    await loadCurrentQuestion();
     
     // Update prev/next button states
     document.getElementById('prevQuestionBtn').disabled = (index === 0);
@@ -222,18 +368,37 @@ async function updateNavigatorButtons() {
     try {
         // Fetch answered questions
         const response = await apiCall(`/exam/${currentExam.id}/answers`);
-        const answeredIds = new Set(response.map(a => a.question_id));
+        const answeredIds = new Set(
+            response
+                .filter(a => {
+                    const hasText = a.typed_answer && a.typed_answer.trim() !== '';
+                    const hasMcq = a.selected_option && a.selected_option.trim() !== '';
+                    const hasPdf = a.has_uploaded_files === true;
+                    return hasText || hasMcq || hasPdf;
+                })
+                .map(a => a.question_id)
+        );
+        
+        const currentIndex = currentExam.current_question_index;
         
         document.querySelectorAll('.question-btn').forEach(btn => {
             const idx = parseInt(btn.dataset.index);
             const qId = parseInt(btn.dataset.questionId);
             
-            btn.classList.remove('current', 'answered');
+            // Remove all state classes first
+            btn.classList.remove('current', 'answered', 'visited');
             
-            if (idx === currentExam.current_question_index) {
+            // Add current class if this is the current question
+            if (idx === currentIndex) {
                 btn.classList.add('current');
-            } else if (answeredIds.has(qId)) {
+            }
+            // Add answered class if answered and saved
+            else if (answeredIds.has(qId)) {
                 btn.classList.add('answered');
+            }
+            // Add visited class if seen but not answered
+            else if (visitedQuestions.has(idx)) {
+                btn.classList.add('visited');
             }
         });
     } catch (error) {
@@ -277,20 +442,20 @@ async function loadCurrentQuestion() {
         document.getElementById('questionProgress').textContent = 
             `Question ${index + 1} of ${allQuestions.length}`;
         
-        // Display question
+        // Display question first (creates MCQ options)
         displayQuestion(question);
         
-        // Load existing answer if any
+        // Then load existing answer if any (after MCQ options are created)
         try {
             const answerResponse = await apiCall(`/answer/get/${currentExam.id}/${question.id}`);
             if (answerResponse && answerResponse !== null) {
-                loadAnswer(answerResponse);
-            } else {
-                clearAnswer();
+                // Use longer delay to ensure DOM is ready
+                setTimeout(() => {
+                    loadAnswerData(answerResponse);
+                }, 100);
             }
         } catch (error) {
             console.error('Error fetching answer:', error);
-            clearAnswer();
         }
         
         // Update navigator
@@ -307,7 +472,8 @@ function displayQuestion(question) {
     document.getElementById('marksLabel').textContent = `${question.marks} marks`;
     
     const questionContent = document.getElementById('questionContent');
-    questionContent.textContent = question.question_text;
+    // Render question text as Markdown
+    questionContent.innerHTML = marked.parse(question.question_text || '');
     renderMath('questionContent');
     
     // Handle MCQ options
@@ -319,9 +485,13 @@ function displayQuestion(question) {
         for (const [key, value] of Object.entries(question.options_json)) {
             const optionDiv = document.createElement('div');
             optionDiv.className = 'mcq-option';
+            
+            // Render option text as Markdown
+            const optionHTML = marked.parse(value || '');
+            
             optionDiv.innerHTML = `
                 <input type="radio" name="mcq" value="${key}" id="opt${key}">
-                <label for="opt${key}"><strong>${key}.</strong> ${value}</label>
+                <label for="opt${key}"><strong>${key}.</strong> <span class="option-text">${optionHTML}</span></label>
             `;
             optionDiv.addEventListener('click', () => {
                 document.getElementById(`opt${key}`).checked = true;
@@ -330,6 +500,9 @@ function displayQuestion(question) {
             });
             mcqOptions.appendChild(optionDiv);
         }
+        
+        // Render LaTeX in all options
+        renderMath('mcqOptions');
     } else {
         mcqOptions.style.display = 'none';
     }
@@ -338,6 +511,10 @@ function displayQuestion(question) {
     const internalChoice = document.getElementById('internalChoice');
     if (question.has_internal_choice && question.alternative_question_text) {
         internalChoice.style.display = 'block';
+        
+        // Render alternative question as Markdown
+        const altQuestionHTML = marked.parse(question.alternative_question_text || '');
+        
         internalChoice.innerHTML = `
             <label>
                 <input type="radio" name="choice" value="main" checked>
@@ -345,9 +522,12 @@ function displayQuestion(question) {
             </label>
             <label>
                 <input type="radio" name="choice" value="alternative">
-                OR answer: ${question.alternative_question_text}
+                <span>OR answer:</span> <div class="alt-question-text">${altQuestionHTML}</div>
             </label>
         `;
+        
+        // Render LaTeX in alternative question
+        renderMath('internalChoice');
     } else {
         internalChoice.style.display = 'none';
     }
@@ -356,20 +536,27 @@ function displayQuestion(question) {
     document.getElementById('answerInput').dataset.questionId = question.id;
 }
 
-function loadAnswer(answer) {
+function loadAnswerData(answer) {
+    // Load typed answer
     if (answer.typed_answer) {
         document.getElementById('answerInput').value = answer.typed_answer;
         updateAnswerPreview();
     }
     
+    // Load MCQ selection
     if (answer.selected_option) {
-        const radio = document.querySelector(`input[value="${answer.selected_option}"]`);
+        const radio = document.querySelector(`input[name="mcq"][value="${answer.selected_option}"]`);
         if (radio) {
             radio.checked = true;
-            radio.closest('.mcq-option').classList.add('selected');
+            const optionDiv = radio.closest('.mcq-option');
+            if (optionDiv) {
+                document.querySelectorAll('.mcq-option').forEach(opt => opt.classList.remove('selected'));
+                optionDiv.classList.add('selected');
+            }
         }
     }
     
+    // Load internal choice selection
     if (answer.selected_choice) {
         const choiceRadio = document.querySelector(`input[name="choice"][value="${answer.selected_choice}"]`);
         if (choiceRadio) choiceRadio.checked = true;
@@ -533,9 +720,10 @@ async function updateTimerDisplay() {
         const response = await apiCall(`/exam/${currentExam.id}/timer`);
         
         if (response.auto_submit) {
-            // Time's up - auto submit
+            // Time's up - show submission screen for final uploads
             stopTimer();
-            await submitExam();
+            showScreen('submission-screen');
+            showStatus('finalUploadStatus', 'Time is up. You can upload final PDFs and then submit.', 'info');
             return;
         }
         
@@ -566,39 +754,37 @@ async function updateTimerDisplay() {
 
 document.getElementById('finalUploadBtn').addEventListener('click', async () => {
     const fileInput = document.getElementById('finalPdfUpload');
-    const questionNumber = parseInt(document.getElementById('finalQuestionNumber').value);
     
-    if (!fileInput.files[0]) {
-        showStatus('finalUploadStatus', 'Please select a PDF file', 'error');
+    if (!fileInput.files.length) {
+        showStatus('finalUploadStatus', 'Please select at least one PDF file', 'error');
         return;
     }
     
-    if (!questionNumber) {
-        showStatus('finalUploadStatus', 'Please enter question number', 'error');
-        return;
-    }
-    
-    const formData = new FormData();
-    formData.append('file', fileInput.files[0]);
-    formData.append('question_number', questionNumber);
+    showStatus('finalUploadStatus', 'Uploading answer sheets...', 'info');
     
     try {
-        const response = await fetch(
-            `${API_BASE}/answer/final-upload/${currentExam.id}`,
-            {
-                method: 'POST',
-                body: formData
+        // Upload all files as general answer sheet attachments
+        for (let i = 0; i < fileInput.files.length; i++) {
+            const formData = new FormData();
+            formData.append('file', fileInput.files[i]);
+            formData.append('question_number', '0'); // 0 indicates full answer sheet
+            
+            const response = await fetch(
+                `${API_BASE}/answer/final-upload/${currentExam.id}`,
+                {
+                    method: 'POST',
+                    body: formData
+                }
+            );
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail);
             }
-        );
-        
-        if (!response.ok) {
-            const error = await response.json();
-            throw new Error(error.detail);
         }
         
-        showStatus('finalUploadStatus', 'PDF uploaded successfully!', 'success');
+        showStatus('finalUploadStatus', `${fileInput.files.length} answer sheet(s) uploaded successfully!`, 'success');
         fileInput.value = '';
-        document.getElementById('finalQuestionNumber').value = '';
         
     } catch (error) {
         showStatus('finalUploadStatus', 'Error: ' + error.message, 'error');
@@ -611,6 +797,16 @@ document.getElementById('submitExamBtn').addEventListener('click', async () => {
     }
     
     await submitExam();
+});
+
+// Top submit button handler (go to submission screen for final uploads)
+document.getElementById('submitExamTopBtn').addEventListener('click', async () => {
+    if (!confirm('Are you sure you want to end the exam now? You can still upload final PDFs before submitting.')) {
+        return;
+    }
+    
+    stopTimer();
+    showScreen('submission-screen');
 });
 
 async function submitExam() {
@@ -703,48 +899,91 @@ function displayExamSummary(summary) {
 }
 
 document.getElementById('downloadReportBtn').addEventListener('click', () => {
-    // Download as HTML file with Markdown rendered
+    // Download as HTML file with Markdown rendered and MathJax support
     const reportHTML = document.getElementById('evaluationReport').innerHTML;
-    const summary = document.getElementById('examSummary').textContent;
+    const summaryHTML = document.getElementById('examSummary').innerHTML;
     
-    // Create a complete HTML document
+    // Create a complete HTML document with print-to-PDF support
     const fullHTML = `<!DOCTYPE html>
 <html>
 <head>
     <meta charset="UTF-8">
-    <title>Exam Evaluation Report - ${currentExam.subject}</title>
+    <title>Exam Evaluation Report - ${currentExam.subject} - ${currentExam.board} Class ${currentExam.class_num}</title>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 20px; line-height: 1.6; }
-        h1, h2, h3 { color: #2563eb; }
-        .summary { background: #f8fafc; padding: 20px; border-radius: 8px; margin-bottom: 30px; }
-        table { border-collapse: collapse; width: 100%; margin: 20px 0; }
-        th, td { border: 1px solid #e2e8f0; padding: 12px; text-align: left; }
-        th { background: #f1f5f9; font-weight: 600; }
-        ul, ol { margin: 10px 0; padding-left: 30px; }
-        code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-family: monospace; }
-        pre { background: #f8fafc; padding: 15px; border-radius: 8px; overflow-x: auto; }
-        blockquote { border-left: 4px solid #2563eb; padding-left: 20px; margin: 20px 0; color: #64748b; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 30px; line-height: 1.8; background: #fff; color: #1e293b; }
+        h1 { color: #2563eb; font-size: 2.2rem; text-align: center; border-bottom: 3px solid #2563eb; padding-bottom: 15px; margin-bottom: 30px; }
+        h2 { color: #2563eb; font-size: 1.8rem; margin-top: 30px; margin-bottom: 15px; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }
+        h3 { color: #475569; font-size: 1.4rem; margin-top: 20px; margin-bottom: 10px; }
+        .summary { background: #f8fafc; padding: 25px; border-radius: 12px; margin-bottom: 40px; border: 2px solid #e2e8f0; }
+        .summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-top: 20px; }
+        .summary-item { background: white; padding: 15px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .summary-item.highlight { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; }
+        .summary-item .label { font-size: 0.9rem; color: #64748b; margin-bottom: 5px; font-weight: 500; }
+        .summary-item.highlight .label { color: rgba(255,255,255,0.9); }
+        .summary-item .value { font-size: 1.6rem; font-weight: bold; color: #2563eb; }
+        .summary-item.highlight .value { color: white; font-size: 2rem; }
+        table { border-collapse: collapse; width: 100%; margin: 25px 0; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        th, td { border: 1px solid #e2e8f0; padding: 14px; text-align: left; }
+        th { background: #f1f5f9; font-weight: 600; color: #1e293b; }
+        tr:nth-child(even) { background: #f8fafc; }
+        ul, ol { margin: 15px 0; padding-left: 35px; }
+        li { margin: 8px 0; }
+        code { background: #f1f5f9; padding: 3px 8px; border-radius: 4px; font-family: 'Courier New', monospace; font-size: 0.9em; }
+        pre { background: #f8fafc; padding: 20px; border-radius: 8px; overflow-x: auto; border: 1px solid #e2e8f0; }
+        pre code { background: none; padding: 0; }
+        blockquote { border-left: 5px solid #2563eb; padding-left: 20px; margin: 25px 0; color: #64748b; font-style: italic; background: #f8fafc; padding: 15px 20px; border-radius: 0 8px 8px 0; }
+        strong { color: #1e293b; font-weight: 600; }
+        em { color: #64748b; }
+        hr { border: none; border-top: 2px solid #e2e8f0; margin: 30px 0; }
+        .report { background: white; }
+        @media print {
+            body { margin: 0; padding: 20px; }
+            h1 { page-break-before: avoid; }
+            h2, h3 { page-break-after: avoid; }
+            table, pre, blockquote { page-break-inside: avoid; }
+        }
     </style>
 </head>
 <body>
-    <h1>Exam Evaluation Report</h1>
+    <h1>📊 Exam Evaluation Report</h1>
     <div class="summary">
         <h2>Exam Summary</h2>
-        <pre>${summary}</pre>
+        ${summaryHTML}
     </div>
     <div class="report">
         ${reportHTML}
     </div>
+    <hr>
+    <p style="text-align: center; color: #94a3b8; font-size: 0.9rem; margin-top: 40px;">
+        Generated on ${new Date().toLocaleString()} | Board: ${currentExam.board} | Class: ${currentExam.class_num} | Subject: ${currentExam.subject}
+    </p>
+    <script>
+        // Auto-trigger print dialog when opening in new window
+        window.onload = function() {
+            setTimeout(() => {
+                // MathJax rendering complete, ready to print
+                window.print();
+            }, 1500);
+        };
+    </script>
 </body>
 </html>`;
     
-    const blob = new Blob([fullHTML], { type: 'text/html' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `exam_report_${currentExam.id}.html`;
-    a.click();
-    URL.revokeObjectURL(url);
+    // Open in new window for print-to-PDF
+    const printWindow = window.open('', '', 'width=900,height=700');
+    printWindow.document.write(fullHTML);
+    printWindow.document.close();
+});
+
+// Download question paper from evaluation screen
+document.getElementById('downloadPaperFromEvalBtn').addEventListener('click', () => {
+    if (currentExam && allQuestions && allQuestions.length > 0) {
+        downloadQuestionPaper();
+    } else {
+        alert('Question paper data not available');
+    }
 });
 
 // ==================== Initialize ====================

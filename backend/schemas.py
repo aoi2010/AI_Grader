@@ -18,6 +18,8 @@ class ExamCreateRequest(BaseModel):
     subject: str = Field(..., min_length=1, max_length=100)
     chapter_focus: Optional[str] = None
     custom_duration_minutes: Optional[int] = Field(None, ge=1, description="Custom exam duration (can only be lower than default)")
+    difficulty_level: Optional[str] = Field("medium", description="Difficulty: easy, medium, hard, extreme, ultra_extreme")
+    syllabus_content: Optional[str] = Field(None, description="Extracted syllabus content from uploaded PDF")
 
 
 class ExamStartRequest(BaseModel):
@@ -77,8 +79,8 @@ class AnswerResponse(BaseModel):
     typed_answer: Optional[str]
     selected_choice: Optional[str]
     selected_option: Optional[str]
-    first_saved_at: datetime
-    last_edited_at: datetime
+    first_saved_at: Optional[datetime] = None
+    last_edited_at: Optional[datetime] = None
     has_uploaded_files: bool
     
     class Config:

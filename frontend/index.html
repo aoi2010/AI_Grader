@@ -82,6 +82,23 @@
                 </div>
                 
                 <div class="form-group">
+                    <label for="difficultyLevel">Difficulty Level *</label>
+                    <select id="difficultyLevel" required>
+                        <option value="easy">Easy - Basic questions for beginners</option>
+                        <option value="medium" selected>Medium - Standard board exam level</option>
+                        <option value="hard">Hard - Challenging questions for advanced students</option>
+                        <option value="extreme">Extreme - Competition level difficulty</option>
+                        <option value="ultra_extreme">Ultra Extreme - Olympiad/JEE Advanced level</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label for="syllabusUpload">Upload Syllabus (Optional - PDF only)</label>
+                    <input type="file" id="syllabusUpload" accept=".pdf">
+                    <small style="color: #64748b; display: block; margin-top: 4px;">Upload your yearly/annual/final exam syllabus. The AI will use only the final syllabus content and referenced exams.</small>
+                </div>
+                
+                <div class="form-group">
                     <label for="customDuration">Custom Duration (Optional)</label>
                     <input type="number" id="customDuration" min="1" placeholder="Leave empty for default duration">
                     <small style="color: #64748b; display: block; margin-top: 4px;">Note: You can only set a duration lower than the default exam duration</small>
@@ -127,7 +144,11 @@
                 <span id="examTitle"></span>
                 <span id="questionProgress"></span>
             </div>
-            <div id="timer" class="timer">00:00:00</div>
+            <div class="header-right">
+                <button id="downloadPaperBtn" class="btn btn-secondary btn-sm">Download Question Paper (PDF)</button>
+                <button id="submitExamTopBtn" class="btn btn-danger btn-sm">Submit Exam</button>
+                <div id="timer" class="timer">00:00:00</div>
+            </div>
         </div>
         
         <div class="exam-container">
@@ -210,14 +231,11 @@
             </div>
             
             <div class="final-upload-section">
-                <h3>Final PDF Upload (Optional)</h3>
+                <h3>Upload Complete Answer Sheet (Optional)</h3>
+                <p class="upload-instruction">Upload your complete answer sheet PDF if you've written answers on paper. This will be used for evaluation along with any typed/uploaded answers.</p>
                 <div class="form-group">
-                    <label for="finalQuestionNumber">Question Number:</label>
-                    <input type="number" id="finalQuestionNumber" min="1" placeholder="Enter question number">
-                </div>
-                <div class="form-group">
-                    <input type="file" id="finalPdfUpload" accept=".pdf">
-                    <button id="finalUploadBtn" class="btn btn-secondary">Upload</button>
+                    <input type="file" id="finalPdfUpload" accept=".pdf" multiple>
+                    <button id="finalUploadBtn" class="btn btn-secondary">Upload Answer Sheets</button>
                 </div>
                 <div id="finalUploadStatus" class="status-message"></div>
             </div>
@@ -245,7 +263,10 @@
                 <h2>Evaluation Report</h2>
                 <div id="evaluationReport" class="evaluation-report"></div>
                 
-                <button id="downloadReportBtn" class="btn btn-primary">Download Full Report</button>
+                <div class="action-buttons" style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button id="downloadReportBtn" class="btn btn-primary">Download Full Report</button>
+                    <button id="downloadPaperFromEvalBtn" class="btn btn-secondary">Download Question Paper</button>
+                </div>
             </div>
         </div>
     </div>

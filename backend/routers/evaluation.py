@@ -40,21 +40,37 @@ async def evaluate_exam(request: EvaluationRequest, db: Session = Depends(get_db
     ).order_by(Question.sequence_number).all()
     
     questions_with_answers = []
+    pdf_attachments = []
     for question in questions:
         answer = db.query(Answer).filter(Answer.question_id == question.id).first()
         
         answer_data = None
         if answer:
-            uploaded_files_count = db.query(UploadedFile).filter(
+            uploaded_files = db.query(UploadedFile).filter(
                 UploadedFile.answer_id == answer.id
-            ).count()
+            ).all()
+            uploaded_files_count = len(uploaded_files)
             
             answer_data = {
                 "typed_answer": answer.typed_answer,
                 "selected_option": answer.selected_option,
                 "selected_choice": answer.selected_choice,
-                "uploaded_files_count": uploaded_files_count
+                "uploaded_files_count": uploaded_files_count,
+                "uploaded_files": [
+                    {
+                        "filename": f.filename,
+                        "file_path": f.file_path
+                    }
+                    for f in uploaded_files
+                ]
             }
+
+            for f in uploaded_files:
+                pdf_attachments.append({
+                    "question_number": question.sequence_number,
+                    "filename": f.filename,
+                    "file_path": f.file_path
+                })
         
         questions_with_answers.append({
             "question": {
@@ -85,7 +101,8 @@ async def evaluate_exam(request: EvaluationRequest, db: Session = Depends(get_db
             subject=exam.subject,
             student_info=student_info,
             questions_with_answers=questions_with_answers,
-            paper_json=exam.paper_json
+            paper_json=exam.paper_json,
+            pdf_attachments=pdf_attachments
         )
         
         # Store evaluation in database

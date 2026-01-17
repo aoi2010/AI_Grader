@@ -217,6 +217,17 @@ body {
     font-weight: 600;
 }
 
+.header-right {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.btn-sm {
+    padding: 8px 16px;
+    font-size: 0.9rem;
+}
+
 .timer {
     font-size: 2rem;
     font-weight: bold;
@@ -330,6 +341,51 @@ body {
     display: block;
     margin-bottom: 10px;
     font-weight: 600;
+}
+
+.internal-choice .alt-question-text {
+    display: inline-block;
+    margin-left: 8px;
+    font-weight: normal;
+    line-height: 1.6;
+}
+
+.internal-choice .alt-question-text p {
+    display: inline;
+    margin: 0;
+}
+
+/* MCQ Option Text Markdown Support */
+.mcq-option .option-text p {
+    display: inline;
+    margin: 0;
+}
+
+.mcq-option .option-text code {
+    background: #f1f5f9;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+}
+
+/* Question Content Markdown Support */
+.question-content p {
+    margin: 10px 0;
+}
+
+.question-content code {
+    background: #f1f5f9;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+}
+
+.question-content pre {
+    background: #f8fafc;
+    padding: 15px;
+    border-radius: 8px;
+    overflow-x: auto;
+    margin: 15px 0;
 }
 
 /* Answer Section */
@@ -687,6 +743,30 @@ body {
     text-decoration: none;
 }
 
+/* Submission Screen Styles */
+.completion-message {
+    background: var(--card-bg);
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 30px;
+    text-align: center;
+}
+
+.completion-message p {
+    margin: 10px 0;
+    font-size: 1.1rem;
+}
+
+.upload-instruction {
+    background: #eff6ff;
+    border-left: 4px solid var(--primary-color);
+    padding: 12px;
+    margin: 10px 0 20px;
+    font-size: 0.95rem;
+    color: var(--text-secondary);
+    border-radius: 4px;
+}
+
 .evaluation-report a:hover {
     text-decoration: underline;
 }
@@ -733,8 +813,15 @@ body {
 }
 
 .question-btn.answered {
-    background: #d1fae5;
-    border-color: var(--success-color);
+    background: #22c55e;
+    border-color: #16a34a;
+    color: white;
+}
+
+.question-btn.visited {
+    background: #a855f7;
+    border-color: #9333ea;
+    color: white;
 }
 
 /* Responsive */
@@ -765,3 +852,82 @@ body {
     }
 }
 
+/* Print Styles for Question Paper PDF */
+@media print {
+    /* Hide all non-question elements */
+    .exam-header,
+    .answer-section,
+    .navigation-section,
+    #timer,
+    #submitExamTopBtn,
+    #downloadPaperBtn,
+    .btn,
+    button {
+        display: none !important;
+    }
+    
+    /* Show only question section */
+    .exam-container {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+    }
+    
+    .question-section {
+        width: 100%;
+        max-width: 100%;
+        border: none;
+        box-shadow: none;
+        padding: 20px;
+    }
+    
+    /* Format question content for print */
+    .question-content {
+        font-size: 12pt;
+        line-height: 1.8;
+        color: #000;
+    }
+    
+    .question-header {
+        font-size: 11pt;
+        font-weight: bold;
+        margin-bottom: 10px;
+        border-bottom: 1px solid #333;
+        padding-bottom: 5px;
+    }
+    
+    /* MCQ options for print */
+    .mcq-option {
+        border: 1px solid #333;
+        padding: 8px;
+        margin: 5px 0;
+        background: white;
+    }
+    
+    /* Internal choice */
+    .internal-choice {
+        border: 1px dashed #666;
+        padding: 10px;
+        margin: 10px 0;
+        background: #f9f9f9;
+    }
+    
+    /* Page breaks */
+    .screen {
+        page-break-after: always;
+    }
+    
+    /* Ensure only exam screen prints */
+    #exam-screen {
+        display: block !important;
+    }
+    
+    #login-screen,
+    #exam-creation-screen,
+    #exam-ready-screen,
+    #submission-screen,
+    #evaluation-screen,
+    #results-screen {
+        display: none !important;
+    }
+}

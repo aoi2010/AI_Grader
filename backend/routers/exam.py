@@ -1,11 +1,12 @@
 """
 Exam Router - Handles exam creation, starting, and question navigation
 """
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List
 import json
 from datetime import datetime
+import fitz  # PyMuPDF for PDF text extraction
 
 from backend.database import get_db
 from backend.models import User, Exam, Question, Answer, ExamStatus, QuestionType
@@ -45,7 +46,9 @@ async def create_exam(request: ExamCreateRequest, db: Session = Depends(get_db))
             board=request.board.value,
             class_num=request.class_num,
             subject=request.subject,
-            chapter_focus=request.chapter_focus
+            chapter_focus=request.chapter_focus,
+            difficulty_level=request.difficulty_level or "medium",
+            syllabus_content=request.syllabus_content
         )
         
         # Step 3: Create exam record with custom duration validation
@@ -79,12 +82,23 @@ async def create_exam(request: ExamCreateRequest, db: Session = Depends(get_db))
         for section_data in paper_json['sections']:
             section = section_data['section']
             for q_data in section_data['questions']:
+                # Normalize question type to a valid enum
+                raw_type = (q_data.get('question_type') or "Short Answer").strip()
+                type_key = raw_type.upper().replace(" ", "_")
+                if type_key not in QuestionType.__members__:
+                    # Infer type from content if model returned unexpected type
+                    if q_data.get('options') or q_data.get('correct_answer'):
+                        type_key = "MCQ"
+                    else:
+                        marks = int(q_data.get('marks') or 0)
+                        type_key = "LONG_ANSWER" if marks >= 5 else "SHORT_ANSWER"
+
                 question = Question(
                     exam_id=exam.id,
                     section=section,
                     sequence_number=question_number,
                     question_text=q_data['question_text'],
-                    question_type=QuestionType[q_data['question_type'].upper().replace(" ", "_")],
+                    question_type=QuestionType[type_key],
                     marks=q_data['marks'],
                     has_internal_choice=q_data.get('has_internal_choice', False),
                     alternative_question_text=q_data.get('alternative_question_text'),
@@ -325,27 +339,7 @@ async def next_question(exam_id: int, db: Session = Depends(get_db)):
     
     current_question = all_questions[exam.current_question_index]
     
-    # Validate that current question has an answer
-    answer = db.query(Answer).filter(
-        Answer.question_id == current_question.id
-    ).first()
-    
-    if not answer:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot proceed: Current question must be answered or have a PDF uploaded"
-        )
-    
-    # Check if answer is valid
-    has_typed_answer = answer.typed_answer is not None and answer.typed_answer.strip() != ""
-    has_mcq_answer = answer.selected_option is not None
-    has_uploaded_files = len(answer.uploaded_files) > 0
-    
-    if not (has_typed_answer or has_mcq_answer or has_uploaded_files):
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot proceed: Current question must be answered or have a PDF uploaded"
-        )
+    # No sequential answering enforcement: allow navigation without answering
     
     # Move to next question
     exam.current_question_index += 1
@@ -419,3 +413,55 @@ async def update_timer(exam_id: int, time_remaining: int, db: Session = Depends(
     db.commit()
     
     return {"message": "Timer updated"}
+
+
+@router.post("/upload-syllabus")
+async def upload_syllabus(syllabus: UploadFile = File(...)):
+    """
+    Upload and extract text from syllabus PDF.
+    Only yearly/annual/final exam syllabus content is used.
+    """
+    if not syllabus.filename.endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Only PDF files are allowed")
+    
+    try:
+        # Read PDF content
+        pdf_bytes = await syllabus.read()
+        
+        # Extract text using PyMuPDF
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        text_content = []
+        
+        for page in doc:
+            text_content.append(page.get_text())
+        
+        full_text = "\n".join(text_content)
+        doc.close()
+        
+        # Focus on yearly/annual/final exam content
+        # Look for keywords that indicate final exam syllabus
+        keywords = ['annual', 'yearly', 'final', 'year-end', 'board exam', 'terminal']
+        relevant_sections = []
+        
+        lines = full_text.split('\n')
+        in_relevant_section = False
+        
+        for line in lines:
+            line_lower = line.lower()
+            # Check if entering a relevant section
+            if any(kw in line_lower for kw in keywords):
+                in_relevant_section = True
+            
+            if in_relevant_section:
+                relevant_sections.append(line)
+        
+        # If no specific annual section found, use full content
+        if not relevant_sections:
+            relevant_sections = lines
+        
+        syllabus_content = "\n".join(relevant_sections)
+        
+        return {"syllabus_content": syllabus_content[:5000]}  # Limit to 5000 chars
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to process PDF: {str(e)}")

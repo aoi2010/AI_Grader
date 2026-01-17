@@ -221,19 +221,32 @@ async def final_pdf_upload(
 ):
     """
     Upload PDF after exam submission (final upload phase)
+    
+    If question_number is 0, uploads as a general answer sheet (attached to first question)
+    Otherwise, uploads to the specific question number
     """
     exam = db.query(Exam).filter(Exam.id == exam_id).first()
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")
     
-    # Find question by sequence number
-    question = db.query(Question).filter(
-        Question.exam_id == exam_id,
-        Question.sequence_number == question_number
-    ).first()
-    
-    if not question:
-        raise HTTPException(status_code=404, detail=f"Question {question_number} not found")
+    # Handle question_number=0 (full answer sheet upload)
+    if question_number == 0:
+        # Attach to first question as a general answer sheet
+        question = db.query(Question).filter(
+            Question.exam_id == exam_id
+        ).order_by(Question.sequence_number).first()
+        
+        if not question:
+            raise HTTPException(status_code=404, detail="No questions found for this exam")
+    else:
+        # Find question by sequence number
+        question = db.query(Question).filter(
+            Question.exam_id == exam_id,
+            Question.sequence_number == question_number
+        ).first()
+        
+        if not question:
+            raise HTTPException(status_code=404, detail=f"Question {question_number} not found")
     
     # Use the same upload logic
     return await upload_pdf(exam_id, question.id, file, db)

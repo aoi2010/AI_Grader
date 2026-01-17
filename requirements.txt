@@ -6,3 +6,5 @@ pydantic-settings==2.1.0
 python-multipart==0.0.6
 google-genai>=1.59.0
 python-dotenv==1.0.0
+PyMuPDF>=1.26.7
+json-repair>=0.55.0
