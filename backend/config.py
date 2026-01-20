@@ -12,9 +12,27 @@ class Settings(BaseSettings):
     # Database
     DATABASE_URL: str = "sqlite:///./ai_grader.db"
     
-    # Google Gemini API
+    # Google Gemini API - Primary and Backup Keys
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    GEMINI_API_KEY_2: str = os.getenv("GEMINI_API_KEY_2", "")
+    GEMINI_API_KEY_3: str = os.getenv("GEMINI_API_KEY_3", "")
+    GEMINI_API_KEY_4: str = os.getenv("GEMINI_API_KEY_4", "")
+    GEMINI_API_KEY_5: str = os.getenv("GEMINI_API_KEY_5", "")
+    GEMINI_API_KEY_6: str = os.getenv("GEMINI_API_KEY_6", "")
     GEMINI_MODEL: str = "gemini-2.5-flash"
+    
+    @property
+    def all_api_keys(self) -> list:
+        """Return list of all configured API keys (non-empty)"""
+        keys = [
+            self.GEMINI_API_KEY,
+            self.GEMINI_API_KEY_2,
+            self.GEMINI_API_KEY_3,
+            self.GEMINI_API_KEY_4,
+            self.GEMINI_API_KEY_5,
+            self.GEMINI_API_KEY_6,
+        ]
+        return [k for k in keys if k]
     
     # File Upload
     UPLOAD_DIR: str = "./uploads"

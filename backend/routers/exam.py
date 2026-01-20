@@ -7,6 +7,7 @@ from typing import List
 import json
 from datetime import datetime
 import fitz  # PyMuPDF for PDF text extraction
+import logging
 
 from backend.database import get_db
 from backend.models import User, Exam, Question, Answer, ExamStatus, QuestionType
@@ -18,6 +19,8 @@ from backend.schemas import (
 from backend.gemini_service import gemini_service
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 @router.post("/create", response_model=ExamResponse)
@@ -33,6 +36,14 @@ async def create_exam(request: ExamCreateRequest, db: Session = Depends(get_db))
     5. Return exam details
     """
     try:
+        logger.info(
+            "AI: create_exam start user=%s board=%s class=%s subject=%s difficulty=%s",
+            request.user_email,
+            request.board.value,
+            request.class_num,
+            request.subject,
+            request.difficulty_level or "medium",
+        )
         # Step 1: Get or create user
         user = db.query(User).filter(User.email == request.user_email).first()
         if not user:
@@ -49,6 +60,13 @@ async def create_exam(request: ExamCreateRequest, db: Session = Depends(get_db))
             chapter_focus=request.chapter_focus,
             difficulty_level=request.difficulty_level or "medium",
             syllabus_content=request.syllabus_content
+        )
+
+        logger.info(
+            "AI: create_exam generated model=%s api_key=%s/%s",
+            gemini_service.last_model_used,
+            (gemini_service.last_key_index_used + 1) if gemini_service.last_key_index_used is not None else None,
+            len(gemini_service.api_keys),
         )
         
         # Step 3: Create exam record with custom duration validation
@@ -357,8 +375,9 @@ async def submit_exam(exam_id: int, db: Session = Depends(get_db)):
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")
     
-    if exam.status == ExamStatus.SUBMITTED:
-        raise HTTPException(status_code=400, detail="Exam already submitted")
+    if exam.status == ExamStatus.SUBMITTED or exam.status == ExamStatus.EVALUATED:
+        # Already submitted or evaluated - return success idempotently
+        return {"message": "Exam already submitted", "exam_id": exam_id}
     
     # Update status
     exam.status = ExamStatus.SUBMITTED

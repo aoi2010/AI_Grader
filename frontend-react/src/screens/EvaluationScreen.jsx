@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useExamStore } from '../store/examStore'
-import { evaluationAPI } from '../services/api'
+import { evaluationAPI, aiAPI } from '../services/api'
 import ReactMarkdown from 'react-markdown'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
@@ -12,6 +12,8 @@ function EvaluationScreen() {
   const [error, setError] = useState(null)
   const [evaluation, setEvaluation] = useState(null)
   const [summary, setSummary] = useState(null)
+  const [aiInfo, setAiInfo] = useState(null)
+  const [retrying, setRetrying] = useState(false)
 
   useMathJax([evaluation])
 
@@ -23,6 +25,14 @@ function EvaluationScreen() {
     try {
       setLoading(true)
       setError(null)
+
+      // Fetch AI info (non-blocking if it fails)
+      aiAPI
+        .getInfo()
+        .then(setAiInfo)
+        .catch(() => {
+          /* ignore */
+        })
 
       // Always fetch summary first to know current status
       const initialSummary = await evaluationAPI.getSummary(currentExam.id)
@@ -36,15 +46,25 @@ function EvaluationScreen() {
         return
       }
 
-      // If not submitted yet, block evaluation
-      if (initialSummary.status !== 'SUBMITTED') {
-        setError('Exam is not submitted yet. Please submit before evaluation.')
+      // If still CREATED, block - should not happen in normal flow
+      if (initialSummary.status === 'CREATED') {
+        setError('Exam has not been started yet.')
         setLoading(false)
         return
       }
 
-      // Otherwise perform evaluation
+      // For IN_PROGRESS or SUBMITTED, proceed with evaluation
+      // The backend will auto-submit if still IN_PROGRESS
       const evalResult = await evaluationAPI.evaluate(currentExam.id)
+
+      // Refresh AI info after evaluation to show last-used model/key
+      aiAPI
+        .getInfo()
+        .then(setAiInfo)
+        .catch(() => {
+          /* ignore */
+        })
+
       // Refresh summary after evaluation to include marks/status
       const finalSummary = await evaluationAPI.getSummary(currentExam.id)
       setEvaluation(evalResult)
@@ -66,7 +86,18 @@ function EvaluationScreen() {
 <head>
     <meta charset="UTF-8">
     <title>Exam Evaluation Report - ${currentExam.subject} - ${currentExam.board} Class ${currentExam.class_num}</title>
-    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script>
+      window.MathJax = {
+        loader: { load: ['[tex]/noerrors', '[tex]/noundefined'] },
+        tex: {
+          packages: { '[+]': ['noerrors', 'noundefined'] },
+          inlineMath: [['$', '$'], ['\\(', '\\)']],
+          displayMath: [['$$', '$$'], ['\\[', '\\]']],
+          processEscapes: true,
+          processEnvironments: true
+        }
+      };
+    </script>
     <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 30px; line-height: 1.8; background: #fff; color: #1e293b; }
@@ -157,6 +188,20 @@ function EvaluationScreen() {
 <html>
 <head>
     <title>${examTitle}</title>
+    <meta charset="UTF-8">
+    <script>
+      window.MathJax = {
+        loader: { load: ['[tex]/noerrors', '[tex]/noundefined'] },
+        tex: {
+          packages: { '[+]': ['noerrors', 'noundefined'] },
+          inlineMath: [['$', '$'], ['\\(', '\\)']],
+          displayMath: [['$$', '$$'], ['\\[', '\\]']],
+          processEscapes: true,
+          processEnvironments: true
+        }
+      };
+    </script>
+    <script id="MathJax-script" defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
         body { font-family: Arial, sans-serif; padding: 30px; }
         .question { page-break-inside: avoid; }
@@ -165,7 +210,13 @@ function EvaluationScreen() {
 <body>${questionsHTML}</body>
 </html>`)
     printWindow.document.close()
-    setTimeout(() => printWindow.print(), 500)
+    setTimeout(() => {
+      if (printWindow.MathJax) {
+        printWindow.MathJax.typesetPromise().finally(() => printWindow.print())
+      } else {
+        printWindow.print()
+      }
+    }, 800)
   }
 
   if (loading) {
@@ -189,6 +240,17 @@ function EvaluationScreen() {
         <div className="container">
           <h1>❌ Evaluation Error</h1>
           <p style={{ color: 'var(--danger-color)' }}>{error}</p>
+          <button
+            className="btn-primary"
+            style={{ marginTop: '12px' }}
+            onClick={() => {
+              setRetrying(true)
+              evaluateExam().finally(() => setRetrying(false))
+            }}
+            disabled={retrying}
+          >
+            {retrying ? 'Retrying...' : 'Retry Evaluation'}
+          </button>
         </div>
       </div>
     )
@@ -198,6 +260,26 @@ function EvaluationScreen() {
     <div className="screen active" id="evaluation-screen">
       <div className="container">
         <h1>🎉 Evaluation Complete</h1>
+
+        {aiInfo && (
+          <div style={{
+            background: '#0f172a',
+            color: '#e2e8f0',
+            padding: '12px 14px',
+            borderRadius: '10px',
+            margin: '14px 0 22px',
+            fontSize: '0.95rem'
+          }}>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <strong style={{ color: '#93c5fd' }}>AI</strong>
+              <span>Configured: <strong>{aiInfo.configured_model}</strong></span>
+              <span style={{ opacity: 0.7 }}>|</span>
+              <span>Last used: <strong>{aiInfo.last_model_used || '—'}</strong></span>
+              <span style={{ opacity: 0.7 }}>|</span>
+              <span>API key: <strong>{aiInfo.last_api_key_index || '—'}</strong> / {aiInfo.api_keys_configured}</span>
+            </div>
+          </div>
+        )}
         
         <div className="exam-summary" id="examSummary">
           <div className="summary-grid">

@@ -42,7 +42,7 @@ function AnswerInput({ answer, onAnswerChange }) {
           ) : (
             <ReactMarkdown
               remarkPlugins={[remarkMath]}
-              rehypePlugins={[rehypeKatex]}
+              rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}
             >
               {typedAnswer}
             </ReactMarkdown>

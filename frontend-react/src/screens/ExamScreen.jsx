@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useExamStore } from '../store/examStore'
 import { examAPI, answerAPI } from '../services/api'
 import QuestionDisplay from '../components/QuestionDisplay'
@@ -18,7 +18,8 @@ function ExamScreen() {
     addAnsweredQuestion,
     addUploadedQuestion,
     setScreen,
-    stopTimer
+    stopTimer,
+    setCurrentExam
   } = useExamStore()
 
   const [currentAnswer, setCurrentAnswer] = useState(null)
@@ -28,6 +29,13 @@ function ExamScreen() {
   const [selectedChoice, setSelectedChoice] = useState('main')
   const [violations, setViolations] = useState([])
   const [isFullscreen, setIsFullscreen] = useState(() => !!document.fullscreenElement)
+  const [needsFullscreen, setNeedsFullscreen] = useState(false)
+  const [lastViolation, setLastViolation] = useState('')
+  const proctoringPauseUntilRef = useRef(0)
+
+  const pauseProctoring = useCallback((ms = 15000) => {
+    proctoringPauseUntilRef.current = Date.now() + ms
+  }, [])
 
   const currentQuestion = allQuestions[currentQuestionIndex]
 
@@ -52,18 +60,41 @@ function ExamScreen() {
     }
   }, [])
 
-  function recordViolation(reason) {
-    setViolations((prev) => [...prev, { reason, at: new Date().toISOString() }].slice(-5))
-
-    const wantsFullscreen = window.confirm(
-      `Hey, stay in fullscreen. OK keeps the exam by re-entering fullscreen. Cancel will submit your exam right now.\n\nReason: ${reason}`
-    )
-
-    if (wantsFullscreen) {
-      requestFullscreen()
+  async function recordViolation(reason) {
+    if (Date.now() < proctoringPauseUntilRef.current) {
       return
     }
+    const next = [...violations, { reason, at: new Date().toISOString() }].slice(-5)
+    setViolations(next)
+    setLastViolation(reason)
 
+    if (next.length >= 4) {
+      try {
+        await examAPI.submitExam(currentExam.id)
+        setCurrentExam({ ...currentExam, status: 'SUBMITTED' })
+        stopTimer()
+        setScreen('evaluation')
+        return
+      } catch (err) {
+        console.error('Auto submit failed:', err)
+        setLastViolation(`Auto submit failed: ${err?.response?.data?.detail || err.message}`)
+      }
+    }
+
+    setNeedsFullscreen(true)
+  }
+
+  const handleForceFullscreen = async () => {
+    await requestFullscreen()
+    if (!document.fullscreenElement) {
+      alert('Browser blocked fullscreen. Please allow it or press F11 to continue.')
+      return
+    }
+    setIsFullscreen(true)
+    setNeedsFullscreen(false)
+  }
+
+  const handleSubmitAfterViolation = () => {
     stopTimer()
     setScreen('submission')
   }
@@ -82,18 +113,21 @@ function ExamScreen() {
   // Anti-cheat listeners
   useEffect(() => {
     const handleVisibility = () => {
+      if (Date.now() < proctoringPauseUntilRef.current) return
       if (document.visibilityState === 'hidden') {
         recordViolation('Tab switch detected')
       }
     }
 
     const handleBlur = () => {
+      if (Date.now() < proctoringPauseUntilRef.current) return
       recordViolation('Window blur detected')
     }
 
     const handleFullscreen = () => {
       const fs = !!document.fullscreenElement
       setIsFullscreen(fs)
+      if (Date.now() < proctoringPauseUntilRef.current) return
       if (!fs) recordViolation('Exited fullscreen')
     }
 
@@ -270,7 +304,22 @@ function ExamScreen() {
   }
 
   const downloadQuestionPaper = () => {
+    // Opening a print window can trigger blur/visibility events; pause proctoring briefly.
+    pauseProctoring(20000)
     const printWindow = window.open('', '', 'width=900,height=700')
+    if (!printWindow) return
+
+    // Auto-resume proctoring as soon as the print window closes.
+    const resumeCheck = window.setInterval(() => {
+      try {
+        if (printWindow.closed) {
+          proctoringPauseUntilRef.current = 0
+          window.clearInterval(resumeCheck)
+        }
+      } catch {
+        // ignore
+      }
+    }, 500)
     const examTitle = `${currentExam.board} - Class ${currentExam.class_num} - ${currentExam.subject}`
     
     let questionsHTML = `<h1 style="text-align: center; border-bottom: 3px solid #2563eb; padding-bottom: 15px;">${examTitle}</h1>`
@@ -319,8 +368,22 @@ function ExamScreen() {
 <head>
     <title>${examTitle} - Question Paper</title>
     <meta charset="UTF-8">
-    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
-    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script>
+      window.MathJax = {
+      loader: { load: ['[tex]/noerrors', '[tex]/noundefined'] },
+      tex: {
+        packages: { '[+]': ['noerrors', 'noundefined'] },
+        inlineMath: [['$', '$'], ['\\(', '\\)']],
+        displayMath: [['$$', '$$'], ['\\[', '\\]']],
+        processEscapes: true,
+        processEnvironments: true
+      },
+      options: {
+        skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre']
+      }
+      };
+    </script>
+    <script id="MathJax-script" defer src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
     <style>
         body { font-family: 'Segoe UI', Arial, sans-serif; padding: 30px; line-height: 1.6; max-width: 900px; margin: 0 auto; }
         h1 { color: #2563eb; font-size: 1.8rem; }
@@ -385,6 +448,24 @@ function ExamScreen() {
       </div>
 
       <div className="exam-content">
+        {needsFullscreen && (
+          <div className="fullscreen-blocker">
+            <div className="fullscreen-modal">
+              <h3>Get back to fullscreen</h3>
+              <p>{lastViolation || 'Fullscreen was exited or blocked.'}</p>
+              <p>Violations so far: {violations.length}</p>
+              <p style={{ color: '#ef4444', marginBottom: '12px' }}>Click below to re-enter fullscreen or submit now.</p>
+              <div className="fullscreen-actions">
+                <button type="button" className="btn-primary" onClick={handleForceFullscreen}>
+                  Re-enter Fullscreen
+                </button>
+                <button type="button" className="btn-danger" onClick={handleSubmitAfterViolation}>
+                  Submit Exam
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         <div className="main-content">
           <div className="question-progress" id="questionProgress">
             Question {currentQuestionIndex + 1} of {allQuestions.length}
@@ -400,7 +481,7 @@ function ExamScreen() {
                 🔒 Re-enter Fullscreen
               </button>
               <div className="proctor-violations">
-                Auto-proctor actions: {violations.length}
+                Violations: <span className="violation-badge">{violations.length}</span>
               </div>
             </div>
           </div>

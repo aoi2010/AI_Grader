@@ -13,7 +13,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from backend.database import engine, Base
-from backend.routers import exam, answer, evaluation
+from backend.routers import exam, answer, evaluation, ai
 
 # Create database tables
 Base.metadata.create_all(bind=engine)
@@ -37,6 +37,7 @@ app.add_middleware(
 app.include_router(exam.router, prefix="/api/exam", tags=["Exam"])
 app.include_router(answer.router, prefix="/api/answer", tags=["Answer"])
 app.include_router(evaluation.router, prefix="/api/evaluation", tags=["Evaluation"])
+app.include_router(ai.router, prefix="/api/ai", tags=["AI"])
 
 # Serve static files (frontend)
 frontend_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend")

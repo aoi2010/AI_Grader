@@ -112,4 +112,12 @@ export const evaluationAPI = {
   }
 }
 
+// AI info endpoints
+export const aiAPI = {
+  getInfo: async () => {
+    const response = await api.get('/ai/info')
+    return response.data
+  }
+}
+
 export default api

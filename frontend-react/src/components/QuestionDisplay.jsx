@@ -4,6 +4,16 @@ import rehypeKatex from 'rehype-katex'
 import { useMathJax } from '../hooks/useMathJax'
 import 'katex/dist/katex.min.css'
 
+function normalizeLatex(text) {
+  if (!text) return ''
+  // Undo JSON escape side-effects that can corrupt LaTeX commands (e.g. \frac -> formfeed + 'rac')
+  return text
+    .replace(/\u000c/g, '\\f')
+    .replace(/\u0009/g, '\\t')
+    .replace(/\u0008/g, '\\b')
+    .replace(/\u000d/g, '\\r')
+}
+
 function QuestionDisplay({
   question,
   sequenceNumber,
@@ -30,9 +40,9 @@ function QuestionDisplay({
       <div className="question-content">
         <ReactMarkdown
           remarkPlugins={[remarkMath]}
-          rehypePlugins={[rehypeKatex]}
+          rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}
         >
-          {question.question_text || ''}
+          {normalizeLatex(question.question_text)}
         </ReactMarkdown>
       </div>
 
@@ -54,9 +64,9 @@ function QuestionDisplay({
                 <span className="option-text">
                   <ReactMarkdown
                     remarkPlugins={[remarkMath]}
-                    rehypePlugins={[rehypeKatex]}
+                    rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}
                   >
-                    {value || ''}
+                    {normalizeLatex(value)}
                   </ReactMarkdown>
                 </span>
               </label>
@@ -90,9 +100,9 @@ function QuestionDisplay({
             <div className="alt-question-text">
               <ReactMarkdown
                 remarkPlugins={[remarkMath]}
-                rehypePlugins={[rehypeKatex]}
+                rehypePlugins={[[rehypeKatex, { throwOnError: false, strict: false }]]}
               >
-                {question.alternative_question_text || ''}
+                {normalizeLatex(question.alternative_question_text)}
               </ReactMarkdown>
             </div>
           </label>

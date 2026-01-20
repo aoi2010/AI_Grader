@@ -19,10 +19,15 @@ class GeminiService:
     
     def __init__(self):
         """Initialize Gemini service with API key"""
-        if not settings.GEMINI_API_KEY:
+        all_keys = settings.all_api_keys
+        if not all_keys:
             raise ValueError("GEMINI_API_KEY not configured")
         
-        self.client = genai.Client(api_key=settings.GEMINI_API_KEY)
+        self.api_keys = all_keys
+        self.current_key_index = 0
+        self.client = genai.Client(api_key=self.api_keys[0])
+        self.last_model_used: Optional[str] = None
+        self.last_key_index_used: Optional[int] = None
         self.model_name = settings.GEMINI_MODEL
         # Updated fallback models based on ListModels API (Jan 2026)
         # Priority: Gemini 3.x > Gemini 2.5.x > Gemini 2.0.x > Gemma 3.x
@@ -52,7 +57,26 @@ class GeminiService:
             "gemma-3-1b-it"
         ]
         self._available_models_cache: Optional[List[str]] = None
+
+    def _use_api_key(self, index: int) -> None:
+        """Switch to a specific configured API key by index."""
+        if index < 0 or index >= len(self.api_keys):
+            raise IndexError("API key index out of range")
+        self.current_key_index = index
+        self.client = genai.Client(api_key=self.api_keys[self.current_key_index])
     
+    def _switch_to_next_api_key(self) -> bool:
+        """Switch to the next available API key. Returns True if switched, False if no more keys."""
+        if self.current_key_index + 1 < len(self.api_keys):
+            self._use_api_key(self.current_key_index + 1)
+            logger.info(f"Switched to backup API key #{self.current_key_index + 1}")
+            return True
+        return False
+    
+    def _reset_to_primary_key(self):
+        """Reset to primary API key"""
+        self._use_api_key(0)
+
     def generate_question_paper(
         self,
         board: str,
@@ -63,7 +87,7 @@ class GeminiService:
         syllabus_content: str = None
     ) -> Dict[str, Any]:
         """
-        Generate a complete question paper using Gemini
+        Generate a complete question paper using Gemini.
         
         Args:
             board: Education board (CBSE/ICSE/WBBSE)
@@ -76,6 +100,14 @@ class GeminiService:
         Returns:
             Dictionary with question paper structure and metadata
         """
+        logger.info(
+            "AI: generate_question_paper board=%s class=%s subject=%s difficulty=%s syllabus_chars=%s",
+            board,
+            class_num,
+            subject,
+            difficulty_level,
+            (len(syllabus_content) if syllabus_content else 0),
+        )
         pattern = get_board_pattern(board, class_num)
         
         prompt = self._create_question_generation_prompt(
@@ -122,7 +154,8 @@ class GeminiService:
         # Difficulty level descriptions
         difficulty_descriptions = {
             "easy": "EASY - Basic questions for beginners. Focus on fundamental concepts, direct application questions, and straightforward problems.",
-            "medium": "MEDIUM - Standard board exam level. Balanced mix of basic and moderate difficulty questions as typically seen in regular board exams.",
+            "medium": "MEDIUM - Standard practice level. Balanced mix of basic and moderate difficulty questions for regular practice.",
+            "board": "BOARD LEVEL - Actual board exam standard. Questions exactly like real CBSE/ICSE/WBBSE board exams with proper marking scheme, common question patterns, and expected difficulty.",
             "hard": "HARD - Challenging questions for advanced students. Include complex multi-step problems, application-based questions, and HOTS (Higher Order Thinking Skills).",
             "extreme": "EXTREME - Competition level difficulty. Include questions similar to JEE Mains, NEET, and state-level competitive exams.",
             "ultra_extreme": "ULTRA EXTREME - Olympiad/JEE Advanced level. Include highly challenging questions requiring deep conceptual understanding, creative problem-solving, and advanced mathematical/scientific reasoning."
@@ -213,6 +246,26 @@ Generate the complete paper now. Output ONLY valid JSON, no additional text."""
     ) -> Dict[str, Any]:
         """Parse Gemini's response into structured format"""
         try:
+            def _restore_latex_control_escapes(obj: Any) -> Any:
+                """Restore common LaTeX commands that may have been eaten by JSON escapes.
+
+                Example: '\\frac' can become a form-feed control char ('\f') + 'rac' if the model outputs
+                single backslashes in JSON. This normalizes those cases back to literal backslash sequences.
+                """
+                if isinstance(obj, str):
+                    # Only restore control chars that are unlikely to be intended in question text.
+                    return (
+                        obj.replace("\f", r"\\f")
+                        .replace("\t", r"\\t")
+                        .replace("\b", r"\\b")
+                        .replace("\r", r"\\r")
+                    )
+                if isinstance(obj, list):
+                    return [_restore_latex_control_escapes(v) for v in obj]
+                if isinstance(obj, dict):
+                    return {k: _restore_latex_control_escapes(v) for k, v in obj.items()}
+                return obj
+
             # Extract JSON from response (Gemini might wrap it in markdown)
             if "```json" in response_text:
                 response_text = response_text.split("```json")[1].split("```")[0].strip()
@@ -238,9 +291,15 @@ Generate the complete paper now. Output ONLY valid JSON, no additional text."""
                 # Remove trailing commas before } or ]
                 response_text = re.sub(r",\s*([}\]])", r"\1", response_text)
 
-                # Escape invalid backslash sequences (e.g., \1, \sqrt)
-                # Valid JSON escapes: \", \\, \/, \b, \f, \n, \r, \t, \uXXXX
-                response_text = re.sub(r"\\(?![\\/\"bfnrtu])", r"\\\\", response_text)
+                # IMPORTANT: Preserve LaTeX backslashes.
+                # If the model outputs single backslashes inside JSON strings (e.g., "\frac"), JSON will
+                # interpret sequences like \f, \t, \b, \r as control escapes. We proactively double any
+                # *single* backslash that isn't already escaped, excluding unicode escapes (\uXXXX).
+                response_text = re.sub(
+                    r"(?<!\\)\\(?!\\)(?!u[0-9a-fA-F]{4})",
+                    r"\\\\",
+                    response_text,
+                )
 
                 try:
                     paper_data = json.loads(response_text)
@@ -252,6 +311,9 @@ Generate the complete paper now. Output ONLY valid JSON, no additional text."""
                         paper_data = json.loads(repaired)
                     except Exception as repair_error:
                         raise repair_error
+
+            # Restore LaTeX commands that may have been converted to control characters during JSON parsing
+            paper_data = _restore_latex_control_escapes(paper_data)
 
             # Validate structure
             if "sections" not in paper_data or "duration_minutes" not in paper_data:
@@ -291,6 +353,14 @@ Generate the complete paper now. Output ONLY valid JSON, no additional text."""
         Returns:
             Detailed evaluation report as formatted Markdown text
         """
+        logger.info(
+            "AI: evaluate_exam board=%s class=%s subject=%s questions=%s pdf_attachments=%s",
+            board,
+            class_num,
+            subject,
+            len(questions_with_answers),
+            (len(pdf_attachments) if pdf_attachments else 0),
+        )
         prompt = self._create_evaluation_prompt(
             board=board,
             class_num=class_num,
@@ -502,48 +572,103 @@ Provide a comprehensive evaluation report in Markdown format following the rules
         return parts
 
     def _generate_with_fallback(self, contents: Any) -> Any:
-        """Generate content with fallback models on quota errors."""
+        """Generate content with fallback models and backup API keys on quota errors."""
         tried: List[str] = []
+        # Always start with primary key for deterministic key ordering
+        self._reset_to_primary_key()
+
         models = self._resolve_model_candidates()
-        
-        logger.info(f"Starting generation with {len(models)} available models")
+        logger.info(
+            "AI: _generate_with_fallback models=%s keys=%s",
+            len(models),
+            len(self.api_keys),
+        )
 
         last_error: Optional[Exception] = None
-        for idx, model in enumerate(models):
-            try:
-                logger.info(f"🤖 Attempting model: {model} (attempt {idx + 1}/{len(models)})")
-                response = self.client.models.generate_content(
-                    model=model,
-                    contents=contents
-                )
-                logger.info(f"✅ SUCCESS: {model} generated response successfully")
-                return response
-            except Exception as e:
-                last_error = e
-                tried.append(model)
-                message = str(e)
-                error_type = "UNKNOWN"
-                
-                if "RESOURCE_EXHAUSTED" in message or "429" in message:
-                    error_type = "QUOTA_EXHAUSTED"
-                    logger.warning(f"⚠️  {model} failed: {error_type} - Retrying with next model...")
-                    # brief backoff and retry next model
-                    time.sleep(0.5 * (idx + 1))
-                    continue
-                if "NOT_FOUND" in message or "404" in message:
-                    error_type = "MODEL_NOT_FOUND"
-                    logger.warning(f"⚠️  {model} failed: {error_type} - Refreshing model list...")
-                    # Refresh available models and retry with updated list
-                    self._available_models_cache = None
-                    models = self._resolve_model_candidates()
-                    continue
-                
-                logger.error(f"❌ {model} failed: {message[:100]}")
-                # non-quota errors should surface immediately
-                raise
 
-        logger.error(f"❌ All models exhausted. Tried: {', '.join(tried)}")
-        raise ValueError(f"All Gemini models exhausted. Tried: {', '.join(tried)}. Last error: {last_error}")
+        # REQUIRED ORDER: for each model, try key1 -> key2 -> key3, then move to next model.
+        for model_idx, model in enumerate(models):
+            for key_idx in range(len(self.api_keys)):
+                try:
+                    if self.current_key_index != key_idx:
+                        self._use_api_key(key_idx)
+                        # Key can affect model visibility; drop cache.
+                        self._available_models_cache = None
+
+                    logger.info(
+                        "AI: attempt model=%s model_try=%s/%s api_key=%s/%s",
+                        model,
+                        model_idx + 1,
+                        len(models),
+                        key_idx + 1,
+                        len(self.api_keys),
+                    )
+
+                    response = self.client.models.generate_content(model=model, contents=contents)
+
+                    self.last_model_used = model
+                    self.last_key_index_used = key_idx
+                    logger.info(
+                        "AI: success model=%s api_key=%s/%s",
+                        model,
+                        key_idx + 1,
+                        len(self.api_keys),
+                    )
+
+                    # Reset for next request, but keep last_* fields for observability.
+                    self._reset_to_primary_key()
+                    return response
+
+                except Exception as e:
+                    last_error = e
+                    tried.append(f"{model}@key{key_idx + 1}")
+                    message = str(e)
+
+                    is_quota = ("RESOURCE_EXHAUSTED" in message) or ("429" in message)
+                    is_not_found = ("NOT_FOUND" in message) or ("404" in message)
+                    is_invalid_key = (
+                        ("INVALID_API_KEY" in message)
+                        or ("API_KEY_INVALID" in message)
+                        or ("401" in message)
+                    )
+
+                    if is_quota:
+                        logger.warning(
+                            "AI: quota_exhausted model=%s api_key=%s/%s; trying next key",
+                            model,
+                            key_idx + 1,
+                            len(self.api_keys),
+                        )
+                        time.sleep(0.25 * (key_idx + 1))
+                        continue
+
+                    if is_invalid_key:
+                        logger.warning(
+                            "AI: invalid_api_key api_key=%s/%s; trying next key",
+                            key_idx + 1,
+                            len(self.api_keys),
+                        )
+                        continue
+
+                    if is_not_found:
+                        logger.warning(
+                            "AI: model_not_found model=%s; moving to next model",
+                            model,
+                        )
+                        # Refresh available models cache; likely a stale alias.
+                        self._available_models_cache = None
+                        break
+
+                    logger.error("AI: failure model=%s api_key=%s/%s err=%s", model, key_idx + 1, len(self.api_keys), message[:160])
+                    # Non-retryable errors should surface immediately
+                    raise
+
+        # Reset to primary key for next request
+        self._reset_to_primary_key()
+        logger.error("AI: exhausted tried=%s", ", ".join(tried))
+        raise ValueError(
+            f"All Gemini models and API keys exhausted. Tried: {', '.join(tried)}. Last error: {last_error}"
+        )
 
     def _resolve_model_candidates(self) -> List[str]:
         """Resolve a list of available models that support generateContent."""

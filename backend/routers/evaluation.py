@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from datetime import datetime
 from typing import List, Dict, Any
+import logging
 
 from backend.database import get_db
 from backend.models import Exam, Question, Answer, UploadedFile, ExamStatus
@@ -12,6 +13,8 @@ from backend.schemas import EvaluationRequest, EvaluationResponse
 from backend.gemini_service import gemini_service
 
 router = APIRouter()
+
+logger = logging.getLogger(__name__)
 
 
 @router.post("/evaluate", response_model=EvaluationResponse)
@@ -30,6 +33,31 @@ async def evaluate_exam(request: EvaluationRequest, db: Session = Depends(get_db
     exam = db.query(Exam).filter(Exam.id == request.exam_id).first()
     if not exam:
         raise HTTPException(status_code=404, detail="Exam not found")
+
+    logger.info(
+        "AI: evaluation request exam_id=%s status=%s board=%s class=%s subject=%s",
+        request.exam_id,
+        getattr(exam.status, "value", str(exam.status)),
+        exam.board.value,
+        exam.class_num,
+        exam.subject,
+    )
+    
+    # If already evaluated, return stored report (idempotent)
+    if exam.status == ExamStatus.EVALUATED and exam.evaluation_report:
+        return EvaluationResponse(
+            exam_id=exam.id,
+            evaluation_report=exam.evaluation_report,
+            evaluated_at=exam.evaluated_at
+        )
+
+    # Auto-submit if not yet submitted
+    if exam.status in (ExamStatus.IN_PROGRESS, ExamStatus.CREATED):
+        exam.status = ExamStatus.SUBMITTED
+        exam.submitted_at = datetime.utcnow()
+        db.query(Answer).filter(Answer.exam_id == request.exam_id).update({"is_locked": True})
+        db.commit()
+        db.refresh(exam)
     
     if exam.status != ExamStatus.SUBMITTED:
         raise HTTPException(status_code=400, detail="Exam must be submitted before evaluation")
@@ -84,45 +112,66 @@ async def evaluate_exam(request: EvaluationRequest, db: Session = Depends(get_db
             "answer": answer_data
         })
     
-    # Generate evaluation report using Gemini
-    try:
-        # Get user information
-        from backend.models import User
-        user = db.query(User).filter(User.id == exam.user_id).first()
-        
-        student_info = {
-            "name": user.name if user else "Unknown",
-            "email": user.email if user else "Unknown"
-        }
-        
-        evaluation_report = gemini_service.evaluate_exam(
-            board=exam.board.value,
-            class_num=exam.class_num,
-            subject=exam.subject,
-            student_info=student_info,
-            questions_with_answers=questions_with_answers,
-            paper_json=exam.paper_json,
-            pdf_attachments=pdf_attachments
-        )
-        
-        # Store evaluation in database
-        exam.evaluation_report = evaluation_report
-        exam.evaluated_at = datetime.utcnow()
-        exam.status = ExamStatus.EVALUATED
-        db.commit()
-        db.refresh(exam)
-        
-        return EvaluationResponse(
-            exam_id=exam.id,
-            evaluation_report=exam.evaluation_report,
-            evaluated_at=exam.evaluated_at
-        )
-    
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Evaluation failed: {str(e)}"
-        )
+    # Generate evaluation report using Gemini with a simple retry on internal errors
+    from backend.models import User
+    user = db.query(User).filter(User.id == exam.user_id).first()
+
+    student_info = {
+        "name": user.name if user else "Unknown",
+        "email": user.email if user else "Unknown"
+    }
+
+    last_error: Exception | None = None
+    max_attempts = 2
+    for attempt in range(1, max_attempts + 1):
+        try:
+            evaluation_report = gemini_service.evaluate_exam(
+                board=exam.board.value,
+                class_num=exam.class_num,
+                subject=exam.subject,
+                student_info=student_info,
+                questions_with_answers=questions_with_answers,
+                paper_json=exam.paper_json,
+                pdf_attachments=pdf_attachments
+            )
+
+            logger.info(
+                "AI: evaluation completed exam_id=%s model=%s api_key=%s/%s attempt=%s",
+                request.exam_id,
+                gemini_service.last_model_used,
+                (gemini_service.last_key_index_used + 1) if gemini_service.last_key_index_used is not None else None,
+                len(gemini_service.api_keys),
+                attempt,
+            )
+
+            # Store evaluation in database
+            exam.evaluation_report = evaluation_report
+            exam.evaluated_at = datetime.utcnow()
+            exam.status = ExamStatus.EVALUATED
+            db.commit()
+            db.refresh(exam)
+
+            return EvaluationResponse(
+                exam_id=exam.id,
+                evaluation_report=exam.evaluation_report,
+                evaluated_at=exam.evaluated_at
+            )
+        except Exception as e:
+            last_error = e
+            logger.exception(
+                "AI: evaluation attempt failed exam_id=%s attempt=%s/%s err=%s",
+                request.exam_id,
+                attempt,
+                max_attempts,
+                str(e),
+            )
+            if attempt < max_attempts:
+                continue
+
+    raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail=f"Evaluation failed after {max_attempts} attempts: {str(last_error)}"
+    )
 
 
 @router.get("/{exam_id}/report")

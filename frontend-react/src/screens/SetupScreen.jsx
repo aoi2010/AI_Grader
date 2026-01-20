@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { examAPI } from '../services/api'
+import { useEffect, useState } from 'react'
+import { examAPI, aiAPI } from '../services/api'
 import { useExamStore } from '../store/examStore'
 
 function SetupScreen() {
@@ -19,6 +19,16 @@ function SetupScreen() {
   
   const [status, setStatus] = useState({ message: '', type: '' })
   const [loading, setLoading] = useState(false)
+  const [aiInfo, setAiInfo] = useState(null)
+
+  useEffect(() => {
+    aiAPI
+      .getInfo()
+      .then(setAiInfo)
+      .catch(() => {
+        /* ignore */
+      })
+  }, [])
 
   const handleChange = (e) => {
     const { name, value, files } = e.target
@@ -47,6 +57,14 @@ function SetupScreen() {
     setStatus({ message: 'Creating your exam...', type: 'info' })
 
     try {
+      // Fetch AI info early (configured model), do not block creation
+      aiAPI
+        .getInfo()
+        .then(setAiInfo)
+        .catch(() => {
+          /* ignore */
+        })
+
       const data = {
         user_name: formData.userName,
         user_email: formData.userEmail,
@@ -72,6 +90,14 @@ function SetupScreen() {
       const exam = await examAPI.create(data)
       setCurrentExam(exam)
 
+      // Refresh AI info after creation to show last-used model/key
+      aiAPI
+        .getInfo()
+        .then(setAiInfo)
+        .catch(() => {
+          /* ignore */
+        })
+
       setStatus({ message: 'Exam created successfully!', type: 'success' })
       setTimeout(() => setScreen('ready'), 1000)
       
@@ -89,6 +115,26 @@ function SetupScreen() {
           <h1>🎓 AI Grader</h1>
           <p>Indian Board Exam System - CBSE / ICSE / WBBSE</p>
         </div>
+
+        {aiInfo && (
+          <div style={{
+            background: '#0f172a',
+            color: '#e2e8f0',
+            padding: '12px 14px',
+            borderRadius: '10px',
+            margin: '12px 0 18px',
+            fontSize: '0.95rem'
+          }}>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
+              <strong style={{ color: '#93c5fd' }}>AI</strong>
+              <span>Configured: <strong>{aiInfo.configured_model}</strong></span>
+              <span style={{ opacity: 0.7 }}>|</span>
+              <span>Last used: <strong>{aiInfo.last_model_used || '—'}</strong></span>
+              <span style={{ opacity: 0.7 }}>|</span>
+              <span>API key: <strong>{aiInfo.last_api_key_index || '—'}</strong> / {aiInfo.api_keys_configured}</span>
+            </div>
+          </div>
+        )}
 
         <div className="setup-form">
           <h2>Create Your Exam</h2>
@@ -185,11 +231,12 @@ function SetupScreen() {
                 value={formData.difficultyLevel}
                 onChange={handleChange}
               >
-                <option value="easy">Easy</option>
-                <option value="medium">Medium (Recommended)</option>
-                <option value="hard">Hard</option>
-                <option value="extreme">Extreme</option>
-                <option value="ultra_extreme">Ultra Extreme</option>
+                <option value="easy">Easy - Basic concepts</option>
+                <option value="medium">Medium - Standard practice</option>
+                <option value="board">Board Level - Actual exam standard (Recommended)</option>
+                <option value="hard">Hard - Competitive prep</option>
+                <option value="extreme">Extreme - Olympiad level</option>
+                <option value="ultra_extreme">Ultra Extreme - Research level</option>
               </select>
             </div>
 
